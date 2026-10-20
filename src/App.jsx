@@ -1,6 +1,12 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { useAuth } from './context/AuthContext';
+import { isPipelineConfigured, workatoWebhookUrl } from './lib/supabase';
+import { fetchAuditEvents, pushAuditEvent } from './lib/cloud';
+import AuthScreen from './components/AuthScreen';
 
 export default function App() {
+  const { ready, cloudEnabled, userId, email: accountEmail, isGuest, signOut, exitGuest } = useAuth();
+
   const [activeTab, setActiveTab] = useState('single');
   const [actionType, setActionType] = useState('transfer');
   
@@ -18,12 +24,23 @@ export default function App() {
   
   // Request Execution States
   const [loading, setLoading] = useState(false);
-  const [auditLogs, setAuditLogs] = useState([
+  const [auditLogs, setAuditLogs] = useState(() => [
     { id: 'LOG-994', time: new Date().toLocaleTimeString(), type: 'SYSTEM', msg: 'AegisZero Security Core initialized.' }
   ]);
 
   const fileInputRef = useRef(null);
-  const WORKATO_WEBHOOK_URL = "https://webhooks.workato.com/webhooks/rest/1ee88f26-d27f-40cd-89af-9364d2aac512/employee_transfer";
+
+  // Persisted audit trail: a signed-in operator sees the same stream on any device.
+  useEffect(() => {
+    if (!userId) return undefined;
+    let cancelled = false;
+    fetchAuditEvents(userId).then((rows) => {
+      if (!cancelled && rows.length) setAuditLogs(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   // CSV Reader Logic
   const handleFileUpload = (file) => {
@@ -50,11 +67,15 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  const addAuditLog = (type, msg) => {
-    setAuditLogs(prev => [
-      { id: `LOG-${Math.floor(1000 + Math.random() * 9000)}`, time: new Date().toLocaleTimeString(), type, msg },
-      ...prev
-    ]);
+  const addAuditLog = (type, msg, payload) => {
+    const entry = {
+      id: `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      time: new Date().toLocaleTimeString(),
+      type,
+      msg
+    };
+    setAuditLogs(prev => [entry, ...prev]);
+    if (userId) pushAuditEvent(userId, { ...entry, payload });
   };
 
   const handleDrag = (e) => {
@@ -73,6 +94,11 @@ export default function App() {
 
   // Webhook Dispatcher
   const handleSubmit = async () => {
+    if (!isPipelineConfigured) {
+      addAuditLog('ERROR', 'No Workato webhook is configured on this deployment (VITE_WORKATO_WEBHOOK_URL). Nothing was sent.');
+      return;
+    }
+
     setLoading(true);
     
     let payload;
@@ -104,23 +130,38 @@ export default function App() {
     }
 
     try {
-      const response = await fetch(WORKATO_WEBHOOK_URL, {
+      const response = await fetch(workatoWebhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
+      if (!response.ok) {
+        throw new Error(`Pipeline endpoint responded ${response.status} ${response.statusText}`);
+      }
       const data = await response.json();
       if (data.status === "ok") {
-        addAuditLog('SUCCESS', `Workato Orchestrator accepted transaction. Workbot notification fired to Slack!`);
+        addAuditLog('SUCCESS', `Workato Orchestrator accepted transaction. Workbot notification fired to Slack!`, payload);
       } else {
-        addAuditLog('ERROR', `Endpoint returned status: ${JSON.stringify(data)}`);
+        addAuditLog('ERROR', `Endpoint returned status: ${JSON.stringify(data)}`, payload);
       }
     } catch (err) {
-      addAuditLog('ERROR', `Webhook connection error: ${err.message}`);
+      addAuditLog('ERROR', `Webhook connection error: ${err.message}`, payload);
     } finally {
       setLoading(false);
     }
   };
+
+  if (!ready) {
+    return (
+      <div style={{ minHeight: '100vh', backgroundColor: '#090d16', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8125rem', fontFamily: 'monospace' }}>
+        Loading console…
+      </div>
+    );
+  }
+
+  if (cloudEnabled && !userId && !isGuest) {
+    return <AuthScreen />;
+  }
 
   return (
     <div style={{
@@ -150,16 +191,54 @@ export default function App() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', fontSize: '0.875rem' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', padding: '0.25rem 0.75rem', borderRadius: '9999px', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
-            <span style={{ width: '8px', height: '8px', backgroundColor: '#10b981', borderRadius: '50%' }}></span>
-            Workato Pipeline Active
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', fontSize: '0.8125rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <span
+            title={isPipelineConfigured ? 'A webhook endpoint is configured for this deployment.' : 'Set VITE_WORKATO_WEBHOOK_URL to enable dispatch.'}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              color: isPipelineConfigured ? '#10b981' : '#fbbf24',
+              backgroundColor: isPipelineConfigured ? 'rgba(16, 185, 129, 0.1)' : 'rgba(251, 191, 36, 0.1)',
+              padding: '0.25rem 0.75rem',
+              borderRadius: '9999px',
+              border: `1px solid ${isPipelineConfigured ? 'rgba(16, 185, 129, 0.2)' : 'rgba(251, 191, 36, 0.25)'}`
+            }}
+          >
+            <span style={{ width: '8px', height: '8px', backgroundColor: isPipelineConfigured ? '#10b981' : '#fbbf24', borderRadius: '50%' }}></span>
+            {isPipelineConfigured ? 'Webhook configured' : 'Webhook not configured'}
           </span>
+
+          {cloudEnabled && userId && (
+            <>
+              <span style={{ color: '#94a3b8', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {accountEmail}
+              </span>
+              <button
+                type="button"
+                onClick={() => signOut()}
+                style={{ padding: '0.3125rem 0.75rem', backgroundColor: '#1e293b', color: '#cbd5e1', border: '1px solid #334155', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer' }}
+              >
+                Sign out
+              </button>
+            </>
+          )}
+
+          {cloudEnabled && !userId && isGuest && (
+            <button
+              type="button"
+              onClick={exitGuest}
+              title="Switch to a signed-in account so the audit trail is saved"
+              style={{ padding: '0.3125rem 0.75rem', backgroundColor: '#1e293b', color: '#fbbf24', border: '1px solid #334155', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600', cursor: 'pointer' }}
+            >
+              Guest session — sign in
+            </button>
+          )}
         </div>
       </header>
 
       {/* Main Container */}
-      <main style={{ flex: 1, padding: '2rem', maxWidth: '1200px', width: '100%', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 380px', gap: '2rem' }}>
+      <main className="aegis-main" style={{ flex: 1, maxWidth: '1200px', width: '100%', margin: '0 auto' }}>
         
         {/* Left Console Workspace */}
         <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '1.5rem', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3)' }}>
@@ -301,9 +380,11 @@ export default function App() {
 
         {/* Right Audit & Live Event Stream Sidebar */}
         <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #1e293b', pb: '0.75rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #1e293b', paddingBottom: '0.75rem' }}>
             <span style={{ fontSize: '0.875rem', fontWeight: '700', color: '#f8fafc' }}>Live Audit Console</span>
-            <span style={{ fontSize: '0.75rem', color: '#3b82f6', fontFamily: 'monospace' }}>REALTIME</span>
+            <span style={{ fontSize: '0.6875rem', color: userId ? '#10b981' : '#64748b', fontFamily: 'monospace' }}>
+              {userId ? 'SAVED TO CLOUD' : 'SESSION ONLY'}
+            </span>
           </div>
 
           <div style={{ flex: 1, backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '8px', padding: '0.75rem', fontFamily: 'monospace', fontSize: '0.75rem', overflowY: 'auto', maxHeight: '420px' }}>

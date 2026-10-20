@@ -52,14 +52,13 @@
 
 body {
   margin: 0;
+  background-color: #090d16;
+  color: #f1f5f9;
+  -webkit-font-smoothing: antialiased;
 }
 
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
+  width: 100%;
   min-height: 100svh;
   display: flex;
   flex-direction: column;
@@ -108,4 +107,24 @@ code {
   line-height: 135%;
   padding: 4px 8px;
   background: var(--code-bg);
+}
+
+html {
+  background-color: #090d16;
+}
+
+/* Console workspace: two columns on wide screens, stacked on phones. */
+.aegis-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 2rem;
+  padding: 2rem;
+}
+
+@media (max-width: 900px) {
+  .aegis-main {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 1rem;
+    gap: 1.25rem;
+  }
 }
