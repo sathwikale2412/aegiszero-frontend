@@ -19,6 +19,11 @@ dist-ssr
 .netlify
 .vercel
 
+# Python build artifacts from the dispatch service
+__pycache__/
+*.pyc
+.venv/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

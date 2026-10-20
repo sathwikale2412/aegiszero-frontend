@@ -7,6 +7,7 @@ export const isSupabaseConfigured = Boolean(url && anonKey);
 
 export const supabase = url && anonKey ? createClient(url, anonKey) : null;
 
-export const workatoWebhookUrl = import.meta.env.VITE_WORKATO_WEBHOOK_URL || '';
-
-export const isPipelineConfigured = Boolean(workatoWebhookUrl);
+// The Workato webhook URL deliberately has no client-side twin. Anything read through
+// import.meta.env is compiled into the public bundle, and that URL carries a tenant token
+// that authorises access-revocation calls. It now lives in the dispatch function's
+// environment; see api/index.py.

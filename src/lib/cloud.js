@@ -1,5 +1,49 @@
 import { supabase } from './supabase';
 
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
+
+/**
+ * Ask the serverless dispatcher to call Workato. The bearer token is the caller's own
+ * Supabase session, which the function verifies before it forwards anything.
+ */
+export async function dispatch(kind, payload) {
+  let token = '';
+  if (supabase) {
+    const { data } = await supabase.auth.getSession();
+    token = data.session?.access_token ?? '';
+  }
+  const response = await fetch(`${API_BASE}/dispatch`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ kind, payload }),
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(`The dispatch service replied ${response.status}.`);
+  }
+  if (!response.ok || data.status !== 'ok') {
+    const suffix = data?.request_id ? ` (ref ${data.request_id})` : '';
+    throw new Error(`${data?.message ?? 'The dispatch failed.'}${suffix}`);
+  }
+  return data;
+}
+
+export async function fetchPipelineHealth() {
+  try {
+    const response = await fetch(`${API_BASE}/health`);
+    if (!response.ok) return { pipeline: 'unreachable', auth: 'unreachable' };
+    return await response.json();
+  } catch {
+    return { pipeline: 'unreachable', auth: 'unreachable' };
+  }
+}
+
 export async function recordLogin(userId, email) {
   if (!supabase) return;
   const { error } = await supabase.from('aegis_logins').insert({ user_id: userId, email });

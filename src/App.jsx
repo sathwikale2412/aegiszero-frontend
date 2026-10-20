@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from './context/AuthContext';
-import { isPipelineConfigured, workatoWebhookUrl } from './lib/supabase';
-import { fetchAuditEvents, pushAuditEvent } from './lib/cloud';
+import { dispatch, fetchAuditEvents, fetchPipelineHealth, pushAuditEvent } from './lib/cloud';
 import AuthScreen from './components/AuthScreen';
 
 export default function App() {
@@ -24,11 +23,23 @@ export default function App() {
   
   // Request Execution States
   const [loading, setLoading] = useState(false);
+  const [pipeline, setPipeline] = useState('unknown');
   const [auditLogs, setAuditLogs] = useState(() => [
     { id: 'LOG-994', time: new Date().toLocaleTimeString(), type: 'SYSTEM', msg: 'AegisZero Security Core initialized.' }
   ]);
 
   const fileInputRef = useRef(null);
+
+  // Whether the server holds a webhook URL is only knowable from the service itself.
+  useEffect(() => {
+    let cancelled = false;
+    fetchPipelineHealth().then((health) => {
+      if (!cancelled) setPipeline(health.pipeline ?? 'unreachable');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const isPipelineConfigured = pipeline === 'configured';
 
   // Persisted audit trail: a signed-in operator sees the same stream on any device.
   useEffect(() => {
@@ -94,58 +105,44 @@ export default function App() {
 
   // Webhook Dispatcher
   const handleSubmit = async () => {
-    if (!isPipelineConfigured) {
-      addAuditLog('ERROR', 'No Workato webhook is configured on this deployment (VITE_WORKATO_WEBHOOK_URL). Nothing was sent.');
+    if (!userId) {
+      addAuditLog('ERROR', 'Dispatch requires a signed-in operator. Anonymous requests are refused by the service.');
       return;
     }
 
     setLoading(true);
-    
+
+    let kind;
     let payload;
     if (activeTab === 'single') {
+      kind = 'single';
       payload = {
-        event_id: `EV-${Date.now()}`,
-        event_type: actionType === 'transfer' ? "employee.team_transferred" : "employee.access_revoked",
+        event_type: actionType === 'transfer' ? 'employee.team_transferred' : 'employee.access_revoked',
         employee_id: employeeId,
         company_email: email,
         previous_team_id: prevTeam,
-        new_team_id: actionType === 'transfer' ? newTeam : "REVOKED",
+        new_team_id: actionType === 'transfer' ? newTeam : 'REVOKED',
         justification: reason,
-        action: actionType.toUpperCase(),
-        effective_at: new Date().toISOString(),
-        source: "aegiszero_enterprise_portal",
-        correlation_id: `CORR-${Math.floor(10000 + Math.random() * 90000)}`
+        effective_at: new Date().toISOString()
       };
       addAuditLog('DISPATCH', `Sending ${actionType.toUpperCase()} signal for ${email}...`);
     } else {
+      kind = 'batch';
       payload = {
-        event_id: `BATCH-${Date.now()}`,
-        event_type: "bulk.batch_processed",
-        batch_size: parsedRows.length,
+        event_type: 'bulk.batch_processed',
         records: parsedRows,
-        source: "aegiszero_csv_engine",
         effective_at: new Date().toISOString()
       };
       addAuditLog('DISPATCH', `Broadcasting batch payload (${parsedRows.length} items) to Workato pipeline...`);
     }
 
     try {
-      const response = await fetch(workatoWebhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (!response.ok) {
-        throw new Error(`Pipeline endpoint responded ${response.status} ${response.statusText}`);
-      }
-      const data = await response.json();
-      if (data.status === "ok") {
-        addAuditLog('SUCCESS', `Workato Orchestrator accepted transaction. Workbot notification fired to Slack!`, payload);
-      } else {
-        addAuditLog('ERROR', `Endpoint returned status: ${JSON.stringify(data)}`, payload);
-      }
+      const result = await dispatch(kind, payload);
+      addAuditLog('SUCCESS', `Workato Orchestrator accepted transaction (ref ${result.request_id}).`, payload);
     } catch (err) {
-      addAuditLog('ERROR', `Webhook connection error: ${err.message}`, payload);
+      // The service already turns upstream failures into one generic sentence plus a
+      // request id, so whatever arrives here is safe to show the operator.
+      addAuditLog('ERROR', err.message, payload);
     } finally {
       setLoading(false);
     }
@@ -193,7 +190,7 @@ export default function App() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', fontSize: '0.8125rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <span
-            title={isPipelineConfigured ? 'A webhook endpoint is configured for this deployment.' : 'Set VITE_WORKATO_WEBHOOK_URL to enable dispatch.'}
+            title={isPipelineConfigured ? 'The dispatch service holds a webhook endpoint for this deployment.' : 'Set WORKATO_WEBHOOK_URL on the dispatch service to enable it.'}
             style={{
               display: 'flex',
               alignItems: 'center',
