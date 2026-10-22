@@ -86,7 +86,16 @@ export default function App() {
       msg
     };
     setAuditLogs(prev => [entry, ...prev]);
-    if (userId) pushAuditEvent(userId, { ...entry, payload });
+    if (userId) {
+      // A log line that never reached Postgres must not look like a stored governance event.
+      pushAuditEvent(userId, { ...entry, payload }).then((saved) => {
+        if (!saved) {
+          setAuditLogs(prev => prev.map((row) => row.id === entry.id
+            ? { ...row, type: 'SYNC_ERROR', msg: `${row.msg} - not written to the audit database` }
+            : row));
+        }
+      });
+    }
   };
 
   const handleDrag = (e) => {

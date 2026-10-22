@@ -65,15 +65,20 @@ export async function fetchLoginHistory(userId) {
   return data ?? [];
 }
 
+// Resolves true when there is nothing to fail: guest mode never claims to persist.
 export async function pushAuditEvent(userId, event) {
-  if (!supabase) return;
+  if (!supabase) return true;
   const { error } = await supabase.from('aegis_audit_events').insert({
     user_id: userId,
     event_type: event.type,
     message: event.msg,
     payload: event.payload ?? {},
   });
-  if (error) console.error('Failed to persist audit event', error.message);
+  if (error) {
+    console.error('Failed to persist audit event', error.message);
+    return false;
+  }
+  return true;
 }
 
 export async function fetchAuditEvents(userId) {

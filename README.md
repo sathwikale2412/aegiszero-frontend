@@ -4,9 +4,11 @@ A zero-trust governance console for employee identity events. An operator submit
 transfer or a full deprovisioning request (single record or bulk CSV), the **dispatch
 service** validates it and relays it to a **Workato** recipe. Sign-ins and dispatches are
 written to the Postgres audit trail **by the console, under the operator's own row-level
-security policy** — the dispatch service stores nothing itself, so the trail is a governance
-record rather than a tamper-proof server log, and a dispatch whose response never arrives
-leaves no row.
+security policy, which grants only read and insert** — an operator can add to the trail and
+re-read it, but cannot edit or erase a row, and Postgres sets the timestamp rather than
+trusting the browser. The dispatch service stores nothing itself, so what the trail proves is
+what a signed-in operator says they submitted, not what Workato executed, and a dispatch whose
+response never arrives leaves no row.
 
 Live deployment: https://aegiszero-frontend.vercel.app
 
@@ -79,8 +81,11 @@ worth having. Without `WORKATO_WEBHOOK_URL` the console renders and the API answ
 ### Database
 
 Run [`supabase/schema.sql`](supabase/schema.sql) once in the Supabase SQL editor. It creates
-`aegis_logins` and `aegis_audit_events`, enables RLS, and adds a policy per table so an
-operator can only read or write rows tagged with their own `auth.uid()`.
+`aegis_logins` and `aegis_audit_events`, enables RLS, and adds a read policy and an insert
+policy per table, so an operator can only see and add rows tagged with their own `auth.uid()` —
+never change one. `before insert` triggers stamp `logged_at` and `created_at` from the database
+clock. A database created from the earlier schema gets the same rules from
+[`supabase/harden-audit.sql`](supabase/harden-audit.sql).
 
 You can use the same Supabase project as your other apps: `auth.users` is shared, so one
 account signs you in across all of them.

@@ -54,9 +54,3 @@ drop trigger if exists aegis_logins_force_time on public.aegis_logins;
 create trigger aegis_logins_force_time
   before insert on public.aegis_logins
   for each row execute function public.aegis_force_login_time();
-
--- Prove it: a policy that still allows UPDATE shows up here, and nothing should.
-select tablename, policyname, cmd
-from pg_policies
-where schemaname = 'public' and tablename like 'aegis%'
-order by tablename, cmd;
