@@ -38,5 +38,30 @@ create policy "own aegis logins read" on public.aegis_logins
 create policy "own aegis logins insert" on public.aegis_logins
   for insert with check (auth.uid() = user_id);
 
-create policy "own aegis events" on public.aegis_audit_events
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "own aegis events read" on public.aegis_audit_events
+  for select using (auth.uid() = user_id);
+
+create policy "own aegis events insert" on public.aegis_audit_events
+  for insert with check (auth.uid() = user_id);
+
+-- Append-only, so an operator cannot rewrite or erase their own dispatch history.
+-- The timestamps are stamped here rather than left to the `default now()` above: that
+-- default only applies when the client omits the column, so a caller could otherwise
+-- back-date a row. See harden-audit.sql to apply this to a database that already exists.
+create or replace function public.aegis_force_event_time()
+returns trigger language plpgsql as $$
+begin new.created_at := now(); return new; end;
+$$;
+
+create or replace function public.aegis_force_login_time()
+returns trigger language plpgsql as $$
+begin new.logged_at := now(); return new; end;
+$$;
+
+create trigger aegis_audit_events_force_time
+  before insert on public.aegis_audit_events
+  for each row execute function public.aegis_force_event_time();
+
+create trigger aegis_logins_force_time
+  before insert on public.aegis_logins
+  for each row execute function public.aegis_force_login_time();
