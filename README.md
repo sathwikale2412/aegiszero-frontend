@@ -121,13 +121,16 @@ account signs you in across all of them.
 
 ```bash
 vercel link
-vercel env add VITE_SUPABASE_URL      production   # type Config
-vercel env add VITE_SUPABASE_ANON_KEY production   # type Config
-vercel env add SUPABASE_URL           production   # type Config (function runtime)
-vercel env add SUPABASE_ANON_KEY      production   # type Config (function runtime)
-vercel env add WORKATO_WEBHOOK_URL    production --secret
+vercel env add VITE_SUPABASE_URL      production --type config
+vercel env add VITE_SUPABASE_ANON_KEY production --type config
+vercel env add SUPABASE_URL           production --type config
+vercel env add SUPABASE_ANON_KEY      production --type config
+vercel env add WORKATO_WEBHOOK_URL    production --type secret
 vercel deploy --prod
 ```
+
+`--type` is required on Vercel CLI 64 and later; a bare `--secret` at the end is not a flag
+and fails. Omitting `--type` entirely makes the CLI ask you interactively.
 
 `VITE_` values are inlined at build time, so adding one after a deploy needs a redeploy.
 A **Secret** is runtime-only, which is exactly right for the webhook URL — but it means the
