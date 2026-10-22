@@ -2,8 +2,11 @@
 
 A zero-trust governance console for employee identity events. An operator submits a team
 transfer or a full deprovisioning request (single record or bulk CSV), the **dispatch
-service** validates it and relays it to a **Workato** recipe, and every dispatch plus every
-sign-in is written to a Postgres audit trail.
+service** validates it and relays it to a **Workato** recipe. Sign-ins and dispatches are
+written to the Postgres audit trail **by the console, under the operator's own row-level
+security policy** — the dispatch service stores nothing itself, so the trail is a governance
+record rather than a tamper-proof server log, and a dispatch whose response never arrives
+leaves no row.
 
 Live deployment: https://aegiszero-frontend.vercel.app
 
